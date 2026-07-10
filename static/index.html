@@ -60,6 +60,16 @@
   .card:hover { border-color: var(--border-2); }
   .chip:hover { background: var(--accent-soft); border-color: var(--accent); }
   .copybtn:hover { background: var(--surface); }
+  /* Überlaufschutz: Grid-Kinder dürfen schrumpfen, Code-Block scrollt dann intern */
+  img, pre { max-width: 100%; }
+  .grid-2col > * { min-width: 0; }
+  /* ===== Mobile ===== */
+  @media (max-width: 760px) {
+    .grid-2col { grid-template-columns: 1fr !important; gap: 32px !important; }
+    header .nav-link { display: none !important; }           /* nur Logo + GitHub in der Nav */
+    .sec-pad { padding-left: 18px !important; padding-right: 18px !important; }
+    .hero-pad { padding-top: 56px !important; padding-bottom: 48px !important; }
+  }
 </style>
 </head>
 <body>
@@ -167,7 +177,7 @@
       <p style="font-size: 17px; color: var(--text-mut); margin: 0;">belex läuft als Remote-Server &mdash; du brauchst nichts zu installieren. Trag den Endpunkt in die Konfiguration deines KI-Tools ein.</p>
     </div>
 
-    <div style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 40px; align-items: start;">
+    <div class="grid-2col" style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 40px; align-items: start;">
       <ol id="steps" style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 26px;"></ol>
 
       <div style="display: flex; flex-direction: column; gap: 18px;">
@@ -236,7 +246,7 @@
 
   <!-- ============================== WER DAHINTER STEHT ============================== -->
   <section id="ueber" style="max-width: 1120px; margin: 0 auto; padding: 80px 24px;">
-    <div style="display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 48px; align-items: start;">
+    <div class="grid-2col" style="display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 48px; align-items: start;">
       <div>
         <div style="font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin-bottom: 12px;">Wer dahinter steht</div>
         <h2 style="font-family: Georgia, serif; font-size: clamp(28px, 4vw, 36px); line-height: 1.15; letter-spacing: -.015em; margin: 0 0 20px; font-weight: 700;">Aus eigenem Bedarf entstanden</h2>
