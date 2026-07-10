@@ -12,7 +12,7 @@ Geschäftsnummer + Datum) aus den amtlichen Quellen.
 
 > ⚠️ **Rechtsinformation, keine Rechtsberatung.** Die Ausgaben können unvollständig
 > oder nicht mehr aktuell sein und ersetzen keine anwaltliche Prüfung. Verbindlich
-> ist allein die amtliche Fassung ([belex.sites.be.ch](https://belex.sites.be.ch)
+> ist allein die amtliche Fassung ([www.belex.sites.be.ch](https://www.belex.sites.be.ch)
 > bzw. das Original des Gerichts). Im Zweifel immer juristisch prüfen lassen.
 
 ## Tools
