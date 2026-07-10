@@ -68,12 +68,22 @@ class _MethodNotFound(Exception):
     pass
 
 
+# CORS: der /mcp-Endpunkt ist oeffentlich und read-only -> jede Origin darf ihn
+# aufrufen (z. B. die Live-Demo der Landing-Page aus einer lokalen Umgebung).
+_CORS = [
+    ("Access-Control-Allow-Origin", "*"),
+    ("Access-Control-Allow-Methods", "POST, OPTIONS"),
+    ("Access-Control-Allow-Headers", "Content-Type"),
+    ("Access-Control-Max-Age", "86400"),
+]
+
+
 def _json(start_response, obj, status="200 OK"):
     body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
     start_response(status, [
         ("Content-Type", "application/json; charset=utf-8"),
         ("Content-Length", str(len(body))),
-    ])
+    ] + _CORS)
     return [body]
 
 
@@ -104,6 +114,11 @@ def application(environ, start_response):
     # GET -> statische Landing-Page / Assets
     if method_http == "GET":
         return _serve_static(environ.get("PATH_INFO", "/"), start_response)
+
+    # CORS-Preflight fuer /mcp
+    if method_http == "OPTIONS":
+        start_response("204 No Content", [("Content-Length", "0")] + _CORS)
+        return [b""]
 
     if method_http != "POST":
         return _json(start_response, {"error": "method not allowed"}, "405 Method Not Allowed")

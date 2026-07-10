@@ -359,9 +359,12 @@ document.querySelectorAll(".mail-obf").forEach(function(a){
   a.addEventListener("click", function(){ track("Kontakt","Klick","E-Mail"); });
 });
 
-/* ============================ Live-Demo: echter MCP-Aufruf (same-origin) ============================ */
+/* ============================ Live-Demo: echter MCP-Aufruf ============================ */
+/* Produktiv (belex.blueforce.ch) same-origin; in jeder anderen Umgebung
+   (z. B. lokal belex.local) direkt gegen den Live-Endpunkt via CORS. */
+var MCP_ENDPOINT = (location.hostname === "belex.blueforce.ch") ? "/mcp" : "https://belex.blueforce.ch/mcp";
 function mcpCall(name, keyword){
-  return fetch("/mcp", {
+  return fetch(MCP_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Accept": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: name, arguments: { keyword: keyword, limit: 4 } } })
