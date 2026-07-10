@@ -20,6 +20,9 @@ from __future__ import annotations
 import asyncio
 import json
 import mimetypes
+import sqlite3
+import threading
+import time
 from pathlib import Path
 
 from server import mcp  # FastMCP-Instanz mit allen registrierten Tools
@@ -29,6 +32,69 @@ SERVER_INFO = {"name": "berner-recht", "version": "1.0.0"}
 
 # Landing-Page + Assets (GET), MCP-Endpunkt (POST /mcp) laufen auf derselben App.
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
+# ---- Rate-Limit (pro IP, Sliding Window, prozessuebergreifend via SQLite) --- #
+# Schuetzt den offenen /mcp-Endpunkt vor Haemmern und haelt uns fair gegenueber
+# der entscheidsuche.ch-Infrastruktur. LiteSpeed faehrt mehrere lswsgi-Prozesse,
+# darum liegt der Zaehler in einer kleinen SQLite (WAL) statt im Prozessspeicher.
+_RATE_LIMIT = 30       # max. Anfragen ...
+_RATE_WINDOW = 60      # ... pro Sekunden je IP
+_RATE_DB = Path(__file__).resolve().parent.parent / "data" / "rate.sqlite"
+_rate_init_lock = threading.Lock()
+_rate_ready = False
+
+
+def _client_ip(environ) -> str:
+    xff = environ.get("HTTP_X_FORWARDED_FOR")
+    if xff:
+        return xff.split(",")[0].strip()
+    return environ.get("REMOTE_ADDR", "?")
+
+
+def _rate_conn():
+    conn = sqlite3.connect(str(_RATE_DB), timeout=3)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=2000")
+    return conn
+
+
+def _rate_ensure():
+    global _rate_ready
+    if _rate_ready:
+        return
+    with _rate_init_lock:
+        if _rate_ready:
+            return
+        _RATE_DB.parent.mkdir(parents=True, exist_ok=True)
+        conn = _rate_conn()
+        conn.execute("CREATE TABLE IF NOT EXISTS hits(ip TEXT, ts REAL)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_hits ON hits(ip, ts)")
+        conn.commit()
+        conn.close()
+        _rate_ready = True
+
+
+def _rate_ok(ip: str) -> bool:
+    """False, wenn die IP im Fenster ihr Limit erreicht hat. Fail-open bei DB-Fehler."""
+    try:
+        _rate_ensure()
+        now = time.time()
+        cutoff = now - _RATE_WINDOW
+        conn = _rate_conn()
+        try:
+            conn.execute("DELETE FROM hits WHERE ts < ?", (cutoff,))  # haelt die Tabelle klein
+            n = conn.execute("SELECT COUNT(*) FROM hits WHERE ip=? AND ts>?",
+                             (ip, cutoff)).fetchone()[0]
+            if n >= _RATE_LIMIT:
+                conn.commit()
+                return False
+            conn.execute("INSERT INTO hits(ip, ts) VALUES(?,?)", (ip, now))
+            conn.commit()
+            return True
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return True  # lieber verfuegbar als faelschlich blockiert
 
 
 def _run(coro):
@@ -122,6 +188,20 @@ def application(environ, start_response):
 
     if method_http != "POST":
         return _json(start_response, {"error": "method not allowed"}, "405 Method Not Allowed")
+
+    # Rate-Limit pro IP (nur fuer die POST-/mcp-Aufrufe)
+    if not _rate_ok(_client_ip(environ)):
+        body = json.dumps(
+            {"jsonrpc": "2.0", "id": None,
+             "error": {"code": -32029, "message": "Rate limit erreicht — bitte kurz warten."}},
+            ensure_ascii=False,
+        ).encode("utf-8")
+        start_response("429 Too Many Requests", [
+            ("Content-Type", "application/json; charset=utf-8"),
+            ("Content-Length", str(len(body))),
+            ("Retry-After", str(_RATE_WINDOW)),
+        ] + _CORS)
+        return [body]
 
     try:
         length = int(environ.get("CONTENT_LENGTH") or 0)

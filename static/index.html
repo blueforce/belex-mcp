@@ -368,10 +368,13 @@ function mcpCall(name, keyword){
     method: "POST",
     headers: { "Content-Type": "application/json", "Accept": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: name, arguments: { keyword: keyword, limit: 4 } } })
-  }).then(function(r){ return r.json(); }).then(function(j){
-    if (j && j.result && j.result.content && j.result.content[0]) return j.result.content[0].text || "";
-    if (j && j.error) return "Fehler: " + j.error.message;
-    return "(keine Antwort)";
+  }).then(function(r){
+    if (r.status === 429) return "__RATE_LIMIT__";
+    return r.json().then(function(j){
+      if (j && j.result && j.result.content && j.result.content[0]) return j.result.content[0].text || "";
+      if (j && j.error) return "Fehler: " + j.error.message;
+      return "(keine Antwort)";
+    });
   });
 }
 var resultBox = document.getElementById("demo-result");
@@ -381,19 +384,33 @@ function block(title, color, text){
     + '<span style="width:8px;height:8px;border-radius:2px;background:'+color+';"></span>'+esc(title)+'</div>'
     + '<div style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px; color: var(--code-text); white-space: pre-wrap; line-height: 1.55; max-height: 260px; overflow:auto;">'+esc(text)+'</div></div>';
 }
+var demoBusy = false;
+var demoBtn = document.querySelector('#demo-form button[type="submit"]');
+function setBusy(on){
+  demoBusy = on;
+  if (demoBtn){ demoBtn.disabled = on; demoBtn.textContent = on ? "Sucht …" : "Suchen"; }
+}
 function runDemo(kw){
   kw = (kw || "").trim();
-  if (!kw) return;
+  if (!kw || demoBusy) return;            // kein Doppel-Klick / Hämmern
   document.getElementById("demo-query").value = kw;
   track("Demo","Suche",kw);
+  setBusy(true);
   resultBox.style.display = "block";
   resultBox.innerHTML = '<div style="font-size:13.5px;color:var(--text-mut);">Suche läuft …</div>';
   Promise.all([ mcpCall("belex_search", kw), mcpCall("vg_search", kw) ]).then(function(res){
+    if (res[0] === "__RATE_LIMIT__" || res[1] === "__RATE_LIMIT__"){
+      resultBox.innerHTML = '<div style="font-size:14px;color:var(--bern-red);">Zu viele Anfragen in kurzer Zeit — bitte einen Moment warten und erneut versuchen.</div>';
+      return;
+    }
     resultBox.innerHTML =
       block("Gesetze (BSG) — belex_search", "var(--accent)", res[0]) +
       block("Gerichtspraxis (VGer) — vg_search", "var(--bern-red)", res[1]);
   }).catch(function(e){
     resultBox.innerHTML = '<div style="font-size:14px;color:var(--bern-red);">Der Endpunkt ist gerade nicht erreichbar. Bitte später erneut versuchen.</div>';
+  }).finally(function(){
+    // kurze Sperre nach Abschluss bremst schnelles Wiederholen zusätzlich
+    setTimeout(function(){ setBusy(false); }, 700);
   });
 }
 document.getElementById("demo-form").addEventListener("submit", function(e){ e.preventDefault(); runDemo(document.getElementById("demo-query").value); });
