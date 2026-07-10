@@ -70,6 +70,13 @@
     .sec-pad { padding-left: 18px !important; padding-right: 18px !important; }
     .hero-pad { padding-top: 56px !important; padding-bottom: 48px !important; }
   }
+  /* Demo-Suchformular: Suchfeld darf schrumpfen, Button ragt nicht über die Karte */
+  #demo-form > div { min-width: 0; }
+  @media (max-width: 480px) {
+    #demo-form { flex-wrap: wrap; }
+    #demo-form > div { flex-basis: 100%; }                   /* Suchfeld volle Breite */
+    #demo-form > button { flex: 1 1 100%; padding: 13px 0; } /* Button darunter, volle Breite */
+  }
 </style>
 </head>
 <body>
