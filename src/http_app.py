@@ -21,6 +21,7 @@ import asyncio
 import json
 import mimetypes
 import sqlite3
+import sys
 import threading
 import time
 from pathlib import Path
@@ -32,6 +33,13 @@ SERVER_INFO = {"name": "berner-recht", "version": "1.0.0"}
 
 # Landing-Page + Assets (GET), MCP-Endpunkt (POST /mcp) laufen auf derselben App.
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
+# JSON-RPC-Requests sind winzig; harte Obergrenze schuetzt vor Speicher-DoS
+# durch grosse POST-Bodies am oeffentlichen Endpunkt.
+_MAX_BODY = 262144  # 256 KB
+
+# Nur dieser Pfad nimmt POST/MCP-Verkehr entgegen; alles andere -> 404.
+_MCP_PATHS = ("/mcp", "/mcp/")
 
 # ---- Rate-Limit (pro IP, Sliding Window, prozessuebergreifend via SQLite) --- #
 # Schuetzt den offenen /mcp-Endpunkt vor Haemmern und haelt uns fair gegenueber
@@ -45,10 +53,10 @@ _rate_ready = False
 
 
 def _client_ip(environ) -> str:
-    xff = environ.get("HTTP_X_FORWARDED_FOR")
-    if xff:
-        return xff.split(",")[0].strip()
-    return environ.get("REMOTE_ADDR", "?")
+    # REMOTE_ADDR ist auf LiteSpeed/Passenger die echte Client-IP. X-Forwarded-For
+    # wird bewusst NICHT vertraut: Der Header ist frei setzbar und liesse sich zur
+    # Rate-Limit-Umgehung missbrauchen (kein vorgelagerter Proxy validiert ihn).
+    return environ.get("REMOTE_ADDR") or "?"
 
 
 def _rate_conn():
@@ -120,7 +128,9 @@ def _dispatch(method: str, params: dict | None, req_id):
         try:
             result = _run(mcp.call_tool(name, args))
         except Exception as exc:  # Tool-Fehler als isError-Ergebnis, nicht als Protokollfehler
-            return {"content": [{"type": "text", "text": f"Fehler: {exc}"}], "isError": True}
+            print(f"[belex] tool {name!r} error: {exc!r}", file=sys.stderr)  # Details nur ins Log
+            return {"content": [{"type": "text", "text": "Werkzeugausfuehrung fehlgeschlagen."}],
+                    "isError": True}
         content, structured = result if isinstance(result, tuple) else (result, None)
         blocks = [c.model_dump(exclude_none=True, by_alias=True) for c in content]
         out = {"content": blocks, "isError": False}
@@ -159,8 +169,9 @@ def _serve_static(path_info: str, start_response):
     if rel in ("", "mcp", "health"):
         rel = "index.html"
     target = (STATIC_DIR / rel).resolve()
-    # Path-Traversal verhindern; unbekannte Pfade -> Landing-Page (SPA-artig)
-    if not str(target).startswith(str(STATIC_DIR)) or not target.is_file():
+    # Path-Traversal verhindern (echte Pfad-Relation, kein String-Prefix);
+    # unbekannte/ungueltige Pfade -> Landing-Page (SPA-artig)
+    if not target.is_relative_to(STATIC_DIR) or not target.is_file():
         target = STATIC_DIR / "index.html"
     data = target.read_bytes()
     ctype = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
@@ -189,6 +200,11 @@ def application(environ, start_response):
     if method_http != "POST":
         return _json(start_response, {"error": "method not allowed"}, "405 Method Not Allowed")
 
+    # POST nur auf dem MCP-Endpunkt entgegennehmen (kleinere Angriffsflaeche)
+    if environ.get("PATH_INFO", "/") not in _MCP_PATHS:
+        return _json(start_response, {"jsonrpc": "2.0", "id": None,
+                     "error": {"code": -32601, "message": "Not found"}}, "404 Not Found")
+
     # Rate-Limit pro IP (nur fuer die POST-/mcp-Aufrufe)
     if not _rate_ok(_client_ip(environ)):
         body = json.dumps(
@@ -203,10 +219,20 @@ def application(environ, start_response):
         ] + _CORS)
         return [body]
 
+    # Request-Body begrenzt einlesen (Schutz vor Speicher-DoS durch grosse POSTs)
+    cl = environ.get("CONTENT_LENGTH") or ""
+    length = int(cl) if cl.isdigit() else 0
+    if length > _MAX_BODY:
+        return _json(start_response, {"jsonrpc": "2.0", "id": None,
+                     "error": {"code": -32600, "message": "Request too large"}},
+                     "413 Payload Too Large")
     try:
-        length = int(environ.get("CONTENT_LENGTH") or 0)
-        raw = environ["wsgi.input"].read(length) if length else b"{}"
-        payload = json.loads(raw or b"{}")
+        raw = environ["wsgi.input"].read(length or (_MAX_BODY + 1)) or b"{}"
+        if len(raw) > _MAX_BODY:
+            return _json(start_response, {"jsonrpc": "2.0", "id": None,
+                         "error": {"code": -32600, "message": "Request too large"}},
+                         "413 Payload Too Large")
+        payload = json.loads(raw)
     except Exception:
         return _json(start_response, {"jsonrpc": "2.0", "id": None,
                      "error": {"code": -32700, "message": "Parse error"}})
@@ -221,11 +247,12 @@ def application(environ, start_response):
 
     try:
         result = _dispatch(rpc_method, payload.get("params"), req_id)
-    except _MethodNotFound as exc:
+    except _MethodNotFound:
         return _json(start_response, {"jsonrpc": "2.0", "id": req_id,
-                     "error": {"code": -32601, "message": f"Method not found: {exc}"}})
+                     "error": {"code": -32601, "message": "Method not found"}})
     except Exception as exc:
+        print(f"[belex] internal error: {exc!r}", file=sys.stderr)  # Details nur ins Log
         return _json(start_response, {"jsonrpc": "2.0", "id": req_id,
-                     "error": {"code": -32603, "message": str(exc)}})
+                     "error": {"code": -32603, "message": "Internal error"}})
 
     return _json(start_response, {"jsonrpc": "2.0", "id": req_id, "result": result})

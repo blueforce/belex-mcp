@@ -1,3 +1,5 @@
-mcp>=1.3.0
-httpx>=0.27.0
-certifi>=2024.0
+# Gepinnt auf die getesteten Versionen (Reproduzierbarkeit + Supply-Chain-Hygiene).
+# Beim Anheben einer Version einmal E2E gegen den MCP-Endpunkt pruefen.
+mcp==1.28.1
+httpx==0.28.1
+certifi==2026.6.17
