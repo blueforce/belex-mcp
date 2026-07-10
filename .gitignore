@@ -1,0 +1,17 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Generierter Index (per `python src/belex_source.py --live` neu baubar)
+data/*.sqlite
+data/*.sqlite-*
+data/train.jsonl.xz
+
+# Laufzeit / Deploy
+tmp/
+refresh.log
+
+# macOS
+.DS_Store
