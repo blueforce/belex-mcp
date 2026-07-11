@@ -15,6 +15,7 @@ Original des Gerichts). Im Zweifel juristisch pruefen lassen.
 from __future__ import annotations
 
 import re
+import sys
 
 from mcp.server.fastmcp import FastMCP
 
@@ -98,7 +99,8 @@ def vg_search(keyword: str, limit: int = 15) -> str:
     try:
         hits = vg_live.search(keyword, limit=limit)
     except Exception as exc:  # entscheidsuche nicht erreichbar
-        return f"Urteilssuche momentan nicht verfuegbar (entscheidsuche.ch): {exc}"
+        print(f"[belex] vg_search error: {exc!r}", file=sys.stderr)
+        return "Urteilssuche momentan nicht verfuegbar (entscheidsuche.ch). Bitte spaeter erneut versuchen."
     if not hits:
         return f"Keine VGer-Urteile fuer {keyword!r} gefunden."
     out = []
@@ -118,7 +120,8 @@ def vg_get_by_nummer(geschaeftsnummer: str, max_chars: int = 12000) -> str:
     try:
         doc = vg_live.get_by_nummer(geschaeftsnummer)
     except Exception as exc:
-        return f"Urteilsabruf momentan nicht verfuegbar (entscheidsuche.ch): {exc}"
+        print(f"[belex] vg_get_by_nummer error: {exc!r}", file=sys.stderr)
+        return "Urteilsabruf momentan nicht verfuegbar (entscheidsuche.ch). Bitte spaeter erneut versuchen."
     if not doc:
         return f"Kein VGer-Urteil zu {geschaeftsnummer!r} gefunden."
     text = doc.get("text", "")
@@ -155,7 +158,8 @@ def vg_index_info() -> str:
     try:
         i = vg_live.info()
     except Exception as exc:
-        return f"Datenstand momentan nicht verfuegbar (entscheidsuche.ch): {exc}"
+        print(f"[belex] vg_index_info error: {exc!r}", file=sys.stderr)
+        return "Datenstand momentan nicht verfuegbar (entscheidsuche.ch). Bitte spaeter erneut versuchen."
     return (
         "Gerichtspraxis — Verwaltungsgericht des Kantons Bern:\n"
         f"Urteile durchsuchbar: {i['anzahl']} (live, alle Jahrgaenge)\n"

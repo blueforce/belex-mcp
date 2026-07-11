@@ -50,6 +50,9 @@ _RATE_WINDOW = 60      # ... pro Sekunden je IP
 _RATE_DB = Path(__file__).resolve().parent.parent / "data" / "rate.sqlite"
 _rate_init_lock = threading.Lock()
 _rate_ready = False
+# Prozess-lokaler Fallback, falls SQLite klemmt (pro Worker, aber besser als kein Limit)
+_rate_fallback_lock = threading.Lock()
+_rate_fallback: dict[str, list[float]] = {}
 
 
 def _client_ip(environ) -> str:
@@ -102,7 +105,23 @@ def _rate_ok(ip: str) -> bool:
         finally:
             conn.close()
     except sqlite3.Error:
-        return True  # lieber verfuegbar als faelschlich blockiert
+        return _rate_ok_memory(ip)  # DB klemmt -> prozess-lokaler Fallback statt fail-open
+
+
+def _rate_ok_memory(ip: str) -> bool:
+    """In-Memory-Fallback (pro Worker), nur wenn die SQLite nicht verfuegbar ist."""
+    now = time.time()
+    cutoff = now - _RATE_WINDOW
+    with _rate_fallback_lock:
+        hits = _rate_fallback.setdefault(ip, [])
+        hits[:] = [t for t in hits if t > cutoff]
+        if len(hits) >= _RATE_LIMIT:
+            return False
+        hits.append(now)
+        if len(_rate_fallback) > 5000:
+            for k in [k for k, v in _rate_fallback.items() if not v or v[-1] < cutoff]:
+                del _rate_fallback[k]
+        return True
 
 
 def _run(coro):
@@ -236,6 +255,11 @@ def application(environ, start_response):
     except Exception:
         return _json(start_response, {"jsonrpc": "2.0", "id": None,
                      "error": {"code": -32700, "message": "Parse error"}})
+
+    # JSON-RPC verlangt ein Objekt; [], null, "x" etc. sind ungueltig (kein 500 auf .get()).
+    if not isinstance(payload, dict):
+        return _json(start_response, {"jsonrpc": "2.0", "id": None,
+                     "error": {"code": -32600, "message": "Invalid Request"}})
 
     req_id = payload.get("id")
     rpc_method = payload.get("method")
