@@ -299,6 +299,8 @@
         </div>
       </div>
 
+      <p id="datastand" style="margin: 0 0 16px; font-size: 13px; color: var(--text-mut); display: none;"></p>
+
       <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding-top: 24px;">
         <img src="assets/belex-logo.png" alt="belex" style="height: 34px; width: auto; background: var(--logo-chip); padding: var(--logo-pad); border-radius: 7px;" />
         <p id="copyright" style="margin: 0; font-size: 13px; color: var(--text-mut);">© Roger Perren · Blueforce &mdash; belex ist kein amtliches Angebot des Kantons Bern.</p>
@@ -432,6 +434,26 @@ function runDemo(kw){
 }
 document.getElementById("demo-form").addEventListener("submit", function(e){ e.preventDefault(); runDemo(document.getElementById("demo-query").value); });
 document.querySelectorAll(".demo-chip").forEach(function(b){ b.addEventListener("click", function(){ runDemo(b.dataset.kw); }); });
+
+/* ============================ Datenstand: echter Indexstand vom Server ============================ */
+/* Zieht "Indexiert am" live aus belex_index_info — aktualisiert sich nach jedem
+   Refresh von selbst. Die Gesetze (BSG) werden periodisch neu gebaut, die
+   VGer-Rechtsprechung ist live (jede Abfrage frisch von entscheidsuche.ch). */
+(function(){
+  fetch(MCP_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Accept": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "belex_index_info", arguments: {} } })
+  }).then(function(r){ return r.ok ? r.json() : null; }).then(function(j){
+    var text = j && j.result && j.result.content && j.result.content[0] ? (j.result.content[0].text || "") : "";
+    var m = text.match(/Indexiert am:\s*(\d{4})-(\d{2})-(\d{2})/);
+    if (!m) return;                                   // kein Datum -> Zeile bleibt versteckt
+    var el = document.getElementById("datastand");
+    el.textContent = "Letztes Update der Gesetze (BSG): " + m[3] + "." + m[2] + "." + m[1]
+      + " · Rechtsprechung (VGer): live von entscheidsuche.ch";
+    el.style.display = "block";
+  }).catch(function(){ /* Endpunkt nicht erreichbar -> stumm, keine Zeile */ });
+})();
 </script>
 </body>
 </html>
