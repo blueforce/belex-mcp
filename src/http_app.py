@@ -183,15 +183,22 @@ def _json(start_response, obj, status="200 OK"):
 
 
 def _serve_static(path_info: str, start_response):
-    """Landing-Page (GET /) und Assets (GET /assets/...) ausliefern."""
+    """Landing-Page (GET /) und Assets (GET /assets/...) ausliefern.
+
+    Unbekannte Pfade -> echte 404 (KEIN SPA-Catch-all). Wichtig: sonst
+    liefern /.well-known/oauth-* und /register HTTP 200 (Landing-Page),
+    woraufhin der claude.ai-Connector-Flow faelschlich einen OAuth-Server
+    annimmt und die Dynamic Client Registration scheitert.
+    """
     rel = (path_info or "/").lstrip("/") or "index.html"
     if rel in ("", "mcp", "health"):
         rel = "index.html"
     target = (STATIC_DIR / rel).resolve()
     # Path-Traversal verhindern (echte Pfad-Relation, kein String-Prefix);
-    # unbekannte/ungueltige Pfade -> Landing-Page (SPA-artig)
+    # unbekannte/ungueltige Pfade -> 404 statt Landing-Page
     if not target.is_relative_to(STATIC_DIR) or not target.is_file():
-        target = STATIC_DIR / "index.html"
+        return _json(start_response,
+                     {"error": "not found"}, "404 Not Found")
     data = target.read_bytes()
     ctype = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
     if ctype.startswith("text/"):
