@@ -182,6 +182,17 @@ def _json(start_response, obj, status="200 OK"):
     return [body]
 
 
+def _text(start_response, body: str, status: str, extra=None):
+    """Kleine Klartext-Antwort (fuer 405/429) statt einer 40-KB-Seite."""
+    data = body.encode("utf-8")
+    headers = [("Content-Type", "text/plain; charset=utf-8"),
+               ("Content-Length", str(len(data)))]
+    if extra:
+        headers += extra
+    start_response(status, headers)
+    return [data]
+
+
 def _serve_static(path_info: str, start_response):
     """Landing-Page (GET /) und Assets (GET /assets/...) ausliefern.
 
@@ -191,8 +202,6 @@ def _serve_static(path_info: str, start_response):
     annimmt und die Dynamic Client Registration scheitert.
     """
     rel = (path_info or "/").lstrip("/") or "index.html"
-    if rel in ("", "mcp", "health"):
-        rel = "index.html"
     target = (STATIC_DIR / rel).resolve()
     # Path-Traversal verhindern (echte Pfad-Relation, kein String-Prefix);
     # unbekannte/ungueltige Pfade -> 404 statt Landing-Page
@@ -214,9 +223,26 @@ def application(environ, start_response):
     """WSGI-Einstieg (Passenger ruft dieses Callable auf)."""
     method_http = environ.get("REQUEST_METHOD", "GET")
 
-    # GET -> statische Landing-Page / Assets
+    # GET -> 405 auf /mcp, sonst statische Landing-Page / Assets
     if method_http == "GET":
-        return _serve_static(environ.get("PATH_INFO", "/"), start_response)
+        path = environ.get("PATH_INFO", "/")
+        # MCP-Spec (Streamable HTTP): Bietet der Server auf GET keinen SSE-Stream
+        # an, MUSS er 405 antworten. Vorher lieferte /mcp hier die Landing-Page mit
+        # HTTP 200; Clients wie mcp-remote werteten das als Fehler und verbanden im
+        # Sekundentakt neu -> 1.66 Mio. GET-Requests und ~66 GB Traffic im Aug 2026.
+        if path in _MCP_PATHS:
+            return _text(start_response,
+                         "Method Not Allowed. Dieser Endpunkt spricht MCP ueber POST.\n",
+                         "405 Method Not Allowed",
+                         [("Allow", "POST, OPTIONS")] + _CORS)
+        if path in ("/health", "/health/"):
+            return _json(start_response, {"status": "ok"})
+        # Rate-Limit neu auch fuer GET: frueher lief GET vollstaendig daran vorbei.
+        if not _rate_ok(_client_ip(environ)):
+            return _text(start_response, "Too Many Requests\n",
+                         "429 Too Many Requests",
+                         [("Retry-After", str(_RATE_WINDOW))])
+        return _serve_static(path, start_response)
 
     # CORS-Preflight fuer /mcp
     if method_http == "OPTIONS":
