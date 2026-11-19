@@ -116,14 +116,14 @@ def search(keyword: str, limit: int = 15) -> list[dict]:
 
 def get_by_bsg(bsg_number: str) -> dict | None:
     """Erlass per BSG-Nummer aus dem lokalen Index holen (WEG 1)."""
-    _assert_bsg(bsg_number)
+    nummer = _assert_bsg(bsg_number)
     if not DB_PATH.exists():
-        return {"bsg": bsg_number, "title": _hint("get_by_bsg"), "text": ""}
+        return {"bsg": nummer, "title": _hint("get_by_bsg"), "text": ""}
     con = sqlite3.connect(DB_PATH)
     try:
         row = con.execute(
             "SELECT bsg, title, text, as_of, source_url FROM erlass WHERE bsg = ?",
-            (bsg_number.strip(),),
+            (nummer,),
         ).fetchone()
     finally:
         con.close()
@@ -335,10 +335,58 @@ def build_index_live(lang: str = SPRACHE, pause: float = 0.1) -> int:
 # --------------------------------------------------------------------------- #
 # Hilfen
 # --------------------------------------------------------------------------- #
+# Gueltige BSG-Nummern sind numerisch-hierarchisch und koennen einen Anhang
+# nach Bindestrich tragen (Anhaenge und Teilerlasse), z. B. '721.0', '105.43-1',
+# '105.235.1-12'. Bewusst ASCII-Ziffern: \d wuerde auch fremde Ziffernzeichen
+# zulassen, die in keiner BSG-Nummer vorkommen.
+_BSG_RE = re.compile(r"[0-9]+(?:\.[0-9]+)*(?:-[0-9]+)?")
+
+BSG_BEISPIELE = "721.0, 105.43-1, 105.235.1-12"
+BSG_FORMAT_HINWEIS = (
+    "Eine BSG-Nummer besteht aus Ziffern mit Punkten und optional einem Anhang "
+    f"nach Bindestrich, zum Beispiel {BSG_BEISPIELE}."
+)
+
+
+def normalize_bsg(bsg: str) -> str:
+    """Eingabe behutsam glaetten, bevor geprueft wird.
+
+    Faengt ab, was Clients typischerweise mitschicken: Leerraum, ein
+    vorangestelltes 'BSG' und typografische Striche statt des Bindestrichs.
+    """
+    s = (bsg or "").strip()
+    s = re.sub(r"^BSG[\s.:]*", "", s, flags=re.I).strip()
+    for strich in ("\u2010", "\u2011", "\u2012", "\u2013", "\u2014", "\u2212"):
+        s = s.replace(strich, "-")
+    return s
+
+
 def _assert_bsg(bsg: str) -> str:
-    if not re.fullmatch(r"[\d.]+", bsg.strip()):
-        raise ValueError(f"Ungueltige BSG-Nummer: {bsg!r}")
-    return bsg
+    """Normalisierte BSG-Nummer zurueckgeben oder mit Hinweis scheitern."""
+    s = normalize_bsg(bsg)
+    if not _BSG_RE.fullmatch(s):
+        raise ValueError(f"Ungueltige BSG-Nummer: {bsg!r}. {BSG_FORMAT_HINWEIS}")
+    return s
+
+
+def aehnliche_bsg(bsg: str, limit: int = 5) -> list[str]:
+    """Nummern vorschlagen, die auf der gesuchten aufbauen (Anhaenge, Unterziffern)."""
+    s = normalize_bsg(bsg)
+    # Nur gepruefte Nummern ins LIKE-Muster: so koennen weder '%' noch '_'
+    # aus der Eingabe als Platzhalter wirken.
+    if not _BSG_RE.fullmatch(s) or not DB_PATH.exists():
+        return []
+    con = sqlite3.connect(DB_PATH)
+    try:
+        rows = con.execute(
+            "SELECT bsg FROM erlass WHERE bsg LIKE ? OR bsg LIKE ? ORDER BY bsg LIMIT ?",
+            (f"{s}.%", f"{s}-%", limit),
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    finally:
+        con.close()
+    return [r[0] for r in rows]
 
 
 def _fts_query(keyword: str) -> str:
