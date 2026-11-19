@@ -19,13 +19,22 @@ Geschäftsnummer + Datum) aus den amtlichen Quellen.
 
 | Tool | Bestand | Zweck |
 |------|---------|-------|
-| `belex_search` | Gesetze | Erlasse per Stichwort finden |
-| `belex_get_by_bsg` | Gesetze | Erlass per BSG-Nummer (z. B. `721.0`) mit Volltext |
+| `belex_search` | Gesetze | Erlasse per Stichwort finden (`keyword`, gleichwertig `query`) |
+| `belex_get_by_bsg` | Gesetze | Erlass per BSG-Nummer (z. B. `721.0` oder `731.2-1`) mit Volltext |
 | `belex_get_article` | Gesetze | Einzelnen Artikel herausschneiden |
 | `belex_index_info` | Gesetze | Datenstand (Anzahl, Quelle, Indexdatum) |
-| `vg_search` | Urteile | VGer-Urteile per Stichwort im Volltext |
+| `vg_search` | Urteile | VGer-Urteile per Stichwort im Volltext (`keyword`, gleichwertig `query`) |
 | `vg_get_by_nummer` | Urteile | Urteil per Geschäftsnummer (z. B. `100.2022.280`) |
 | `vg_index_info` | Urteile | Datenstand (Anzahl, neuester Entscheid) |
+
+### BSG-Nummern
+
+Ziffern mit Punkten und optional einem Anhang nach Bindestrich:
+`Ziffern(.Ziffern)*(-Ziffern)?`, immer dreistellig beginnend. Von den 712
+Erlassen im Index tragen 96 einen solchen Anhang, etwa `731.2-1` (IVöB) oder
+`105.235.1-12`. Andere Zeichen als `0-9`, `.` und `-` kommen nicht vor.
+Ein vorangestelltes `BSG` und typografische Striche werden vor der Prüfung
+geglättet.
 
 ## Nutzen (Remote, ohne Installation)
 
