@@ -335,9 +335,9 @@ def build_index_live(lang: str = SPRACHE, pause: float = 0.1) -> int:
 # --------------------------------------------------------------------------- #
 # Hilfen
 # --------------------------------------------------------------------------- #
-# Gueltige BSG-Nummern sind numerisch-hierarchisch und koennen einen Anhang
-# nach Bindestrich tragen (Anhaenge und Teilerlasse), z. B. '721.0', '105.43-1',
-# '105.235.1-12'. Bewusst ASCII-Ziffern: \d wuerde auch fremde Ziffernzeichen
+# Gültige BSG-Nummern sind numerisch-hierarchisch und können einen Anhang
+# nach Bindestrich tragen (Anhänge und Teilerlasse), z. B. '721.0', '105.43-1',
+# '105.235.1-12'. Bewusst ASCII-Ziffern: \d würde auch fremde Ziffernzeichen
 # zulassen, die in keiner BSG-Nummer vorkommen.
 _BSG_RE = re.compile(r"[0-9]+(?:\.[0-9]+)*(?:-[0-9]+)?")
 
@@ -349,9 +349,9 @@ BSG_FORMAT_HINWEIS = (
 
 
 def normalize_bsg(bsg: str) -> str:
-    """Eingabe behutsam glaetten, bevor geprueft wird.
+    """Eingabe behutsam glätten, bevor geprüft wird.
 
-    Faengt ab, was Clients typischerweise mitschicken: Leerraum, ein
+    Fängt ab, was Clients typischerweise mitschicken: Leerraum, ein
     vorangestelltes 'BSG' und typografische Striche statt des Bindestrichs.
     """
     s = (bsg or "").strip()
@@ -362,17 +362,17 @@ def normalize_bsg(bsg: str) -> str:
 
 
 def _assert_bsg(bsg: str) -> str:
-    """Normalisierte BSG-Nummer zurueckgeben oder mit Hinweis scheitern."""
+    """Normalisierte BSG-Nummer zurückgeben oder mit Hinweis scheitern."""
     s = normalize_bsg(bsg)
     if not _BSG_RE.fullmatch(s):
-        raise ValueError(f"Ungueltige BSG-Nummer: {bsg!r}. {BSG_FORMAT_HINWEIS}")
+        raise ValueError(f"Ungültige BSG-Nummer: {bsg!r}. {BSG_FORMAT_HINWEIS}")
     return s
 
 
-def aehnliche_bsg(bsg: str, limit: int = 5) -> list[str]:
-    """Nummern vorschlagen, die auf der gesuchten aufbauen (Anhaenge, Unterziffern)."""
+def naheliegende_bsg(bsg: str, limit: int = 5) -> list[str]:
+    """Nummern vorschlagen, die auf der gesuchten aufbauen (Anhänge, Unterziffern)."""
     s = normalize_bsg(bsg)
-    # Nur gepruefte Nummern ins LIKE-Muster: so koennen weder '%' noch '_'
+    # Nur geprüfte Nummern ins LIKE-Muster: so können weder '%' noch '_'
     # aus der Eingabe als Platzhalter wirken.
     if not _BSG_RE.fullmatch(s) or not DB_PATH.exists():
         return []

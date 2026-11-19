@@ -35,23 +35,23 @@ DISCLAIMER = (
 
 
 # --------------------------------------------------------------------------- #
-# Hilfen fuer die Tools
+# Hilfen für die Tools
 # --------------------------------------------------------------------------- #
 def _begriff(keyword: str, query: str) -> str:
     """Suchbegriff aus 'keyword' oder dem gleichwertigen 'query' nehmen.
 
     Clients raten den Parameternamen gelegentlich. Beide Namen zu akzeptieren
-    ist billiger als ein Fehlschlag, der fuer die Nutzerin wie ein Serverfehler
+    ist billiger als ein Fehlschlag, der für die Nutzerin wie ein Serverfehler
     aussieht.
     """
     return (keyword or "").strip() or (query or "").strip()
 
 
 def _nicht_gefunden(bsg_number: str) -> str:
-    """Fundmeldung mit Formatbeispiel und, wenn moeglich, naheliegenden Nummern."""
+    """Fundmeldung mit Formatbeispiel und, wenn möglich, naheliegenden Nummern."""
     zeilen = [f"Kein Erlass zu BSG {bsg_number!r} im Index gefunden.",
               belex_source.BSG_FORMAT_HINWEIS]
-    nah = belex_source.aehnliche_bsg(bsg_number)
+    nah = belex_source.naheliegende_bsg(bsg_number)
     if nah:
         zeilen.append("Darauf aufbauend gibt es: " + ", ".join(nah) + ".")
     return " ".join(zeilen)
@@ -65,14 +65,14 @@ def belex_search(keyword: str = "", limit: int = 15, query: str = "") -> str:
     """Sucht Berner Erlasse (Gesetze/Verordnungen der BSG) per Stichwort.
 
     keyword: z. B. 'Baugesetz', 'Gewaesserraum', 'Datenschutz'. limit: max. Treffer.
-    query: gleichbedeutend mit keyword, einer von beiden genuegt.
+    query: gleichbedeutend mit keyword, einer von beiden genügt.
     """
     begriff = _begriff(keyword, query)
     if not begriff:
         return "Bitte einen Suchbegriff angeben (Parameter 'keyword', alternativ 'query')."
     hits = belex_source.search(begriff, limit=limit)
     if not hits:
-        return f"Keine Gesetzes-Treffer fuer {begriff!r} in der BSG."
+        return f"Keine Gesetzes-Treffer für {begriff!r} in der BSG."
     out = [f"BSG {h.get('bsg','?')} — {h.get('title','')}"
            + (f" · Stand {h['as_of']}" if h.get("as_of") else "")
            for h in hits]
@@ -127,7 +127,7 @@ def vg_search(keyword: str = "", limit: int = 15, query: str = "") -> str:
     """Sucht Urteile des Verwaltungsgerichts Bern per Stichwort im Volltext (live).
 
     keyword: z. B. 'Gewaesserraum', 'Baubewilligung Ausnuetzung'. limit: max. Treffer.
-    query: gleichbedeutend mit keyword, einer von beiden genuegt.
+    query: gleichbedeutend mit keyword, einer von beiden genügt.
     Datenquelle: entscheidsuche.ch (tagesaktuell).
     """
     begriff = _begriff(keyword, query)
@@ -139,7 +139,7 @@ def vg_search(keyword: str = "", limit: int = 15, query: str = "") -> str:
         print(f"[belex] vg_search error: {exc!r}", file=sys.stderr)
         return "Urteilssuche momentan nicht verfuegbar (entscheidsuche.ch). Bitte spaeter erneut versuchen."
     if not hits:
-        return f"Keine VGer-Urteile fuer {begriff!r} gefunden."
+        return f"Keine VGer-Urteile für {begriff!r} gefunden."
     out = []
     for h in hits:
         zeile = f"VGE {h['gnr']} vom {h['datum']}"
