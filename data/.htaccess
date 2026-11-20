@@ -1,0 +1,17 @@
+# data/ ist Laufzeitverzeichnis, nicht Webinhalt.
+#
+# Auf dem gehosteten Betrieb (LiteSpeed/Passenger, PassengerBaseURI "/") liefert
+# der Webserver jede vorhandene Datei im App-Verzeichnis direkt aus, bevor
+# Passenger ueberhaupt gefragt wird. Gemessen am 20.11.2026:
+#   GET /data/rate.sqlite   -> HTTP 200, 20480 B   (enthaelt IP-Adressen)
+#   GET /data/belex.sqlite  -> HTTP 206, 21 MB     (Bandbreitensenke)
+#
+# Beides gehoert nicht ins Netz: rate.sqlite sind Personendaten (Zaehler zur
+# Missbrauchsabwehr, taeglich aufgeraeumt), belex.sqlite ist ein 21-MB-Download,
+# den ein Crawler beliebig oft ziehen koennte. Der Index gehoert nicht ins Web,
+# sondern wird aus der amtlichen Quelle gebaut.
+#
+# Die App selbst liest beide Dateien vom Dateisystem, nicht ueber HTTP. Diese
+# Regel kann den Betrieb darum nicht stoeren.
+
+Require all denied

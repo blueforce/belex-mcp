@@ -101,13 +101,33 @@ Kontingent antwortet mit **HTTP 200** und einem `tools/call`-Ergebnis mit
 `isError` plus Klartextbegründung, nicht mit 429: ein unerwarteter Statuscode hat
 im August 2026 bei `mcp-remote` einen Reconnect-Sturm ausgelöst.
 
+Das billige Kontingent ist eine Notbremse, keine Crawler-Abwehr: den Crawler
+vom 20.11.2026 hätte es mit seinen 36 billigen Aufrufen **nicht** gestoppt.
+Tiefer geht aber nicht sinnvoll, denn die Landing-Page bucht selbst darauf, ein
+Aufruf pro Seitenansicht (`belex_index_info`) und ein weiterer pro Demo-Suche
+(`belex_search`). Zwischen echter Nutzung und diesem Crawler liegt auf der
+billigen Seite keine saubere Grenze, und 36 Abfragen gegen eine lokale SQLite
+tun nicht weh. Die scharfe Bremse sitzt deshalb dort, wo fremde Last entsteht.
+
 Die erste Abweisung pro Schlüssel, Tag und Gruppe schreibt eine Zeile ins
-`stderr.log`. So bleibt nachprüfbar, ob je echte Nutzung getroffen wurde.
+`stderr.log`, bewusst **ohne** Adresse, nur mit der groben Herkunft
+(`Anthropic` oder `fremd`): im gehosteten Betrieb ist `GET /stderr.log`
+öffentlich abrufbar. So bleibt nachprüfbar, ob je echte Nutzung getroffen wurde,
+ohne eine Kennung in eine lesbare Datei zu schreiben.
 
 Die Zähler liegen in `data/rate.sqlite` (Tabellen `hits` für das Minutenfenster,
 `quota` für die Tage), weil LiteSpeed mehrere `lswsgi`-Prozesse fährt und ein
 Zähler im Prozessspeicher darum nicht greift. Beide Tabellen räumen alte Zeilen
 selbst weg.
+
+### Noch offen am gehosteten Endpunkt
+
+Der Webserver liefert jede vorhandene Datei im App-Verzeichnis direkt aus, bevor
+Passenger gefragt wird. `data/.htaccess` sperrt das Laufzeitverzeichnis. Offen
+bleiben `GET /stderr.log`, `GET /refresh.log` und `GET /src/*.py`: das Log
+enthält Werkzeugargumente, also Suchbegriffe von Nutzerinnen. Das lässt sich nur
+in der cPanel-verwalteten `.htaccess` im Wurzelverzeichnis abstellen, die hier
+bewusst unangetastet bleibt.
 
 ## Lokal betreiben (stdio, Claude Desktop)
 

@@ -87,6 +87,16 @@ _QUOTA = {
     "teuer": 25,
     # Reine Notbremse gegen Dauerhaemmern auf die lokale SQLite. Hier schadet
     # Menge nur dem eigenen CPU-Kontingent, darum weit gefasst.
+    #
+    # Offen gesagt: dieser Wert haette den Crawler vom 20.11.2026 NICHT gestoppt
+    # (36 billige Aufrufe aus seinem /64). Tiefer geht aber nicht sinnvoll, denn
+    # die Landing-Page bucht selbst auf dieses Kontingent: jeder Seitenaufruf
+    # kostet einen Aufruf (belex_index_info) und jede Demo-Suche einen weiteren
+    # (belex_search). Eine Besucherin mit 15 Suchen liegt damit schon bei rund
+    # 30, die hoechste beobachtete Einzelzahl echter Nutzung war 16. Zwischen
+    # echter Nutzung und diesem Crawler liegt auf der billigen Seite also keine
+    # saubere Grenze — und 36 Abfragen gegen eine lokale SQLite tun auch nicht
+    # weh. Die scharfe Bremse gehoert dorthin, wo es fremde Last erzeugt: oben.
     "billig": 300,
 }
 
@@ -196,31 +206,36 @@ def _quota_ok(ip: str, gruppe: str) -> bool:
     if not grenze:
         return True
     tag = time.strftime("%Y-%m-%d", time.gmtime())  # UTC, damit der Tag eindeutig ist
-    ip = _quota_key(ip)
+    schluessel = _quota_key(ip)
     try:
         _rate_ensure()
         conn = _rate_conn()
         try:
             cur = conn.execute(
                 "INSERT OR IGNORE INTO quota(ip, tag, grp, n) VALUES(?,?,?,0)",
-                (ip, tag, gruppe))
+                (schluessel, tag, gruppe))
             if cur.rowcount:
                 # Erster Aufruf dieser IP heute: guter Moment zum Aufraeumen.
                 # Dadurch bleibt die Tabelle bei wenigen Zeilen, ohne dass
                 # jeder einzelne Aufruf eine Loeschoperation kostet.
                 conn.execute("DELETE FROM quota WHERE tag < ?", (tag,))
             row = conn.execute("SELECT n FROM quota WHERE ip=? AND tag=? AND grp=?",
-                               (ip, tag, gruppe)).fetchone()
+                               (schluessel, tag, gruppe)).fetchone()
             if row and row[0] >= grenze:
                 if row[0] == grenze:  # genau einmal pro Schluessel/Tag/Gruppe
-                    print(f"[belex] Kontingent '{gruppe}' erschoepft: {ip} ({tag})",
+                    # Bewusst OHNE Adresse: stderr.log ist im gehosteten Betrieb
+                    # oeffentlich abrufbar (gemessen 20.11.2026, GET /stderr.log
+                    # -> HTTP 200). Die grobe Herkunft genuegt, um spaeter
+                    # nachzusehen, ob je echte Nutzung getroffen wurde.
+                    herkunft = "Anthropic" if ip.startswith("160.79.106.") else "fremd"
+                    print(f"[belex] Kontingent '{gruppe}' erschoepft ({tag}, {herkunft})",
                           file=sys.stderr)
-                    conn.execute("UPDATE quota SET n = n + 1 "
-                                 "WHERE ip=? AND tag=? AND grp=?", (ip, tag, gruppe))
+                    conn.execute("UPDATE quota SET n = n + 1 WHERE ip=? AND tag=? AND grp=?",
+                                 (schluessel, tag, gruppe))
                 conn.commit()
                 return False
             conn.execute("UPDATE quota SET n = n + 1 WHERE ip=? AND tag=? AND grp=?",
-                         (ip, tag, gruppe))
+                         (schluessel, tag, gruppe))
             conn.commit()
             return True
         finally:
