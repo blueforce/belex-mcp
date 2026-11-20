@@ -67,8 +67,47 @@ src/vg_live.py        Gerichtspraxis: Live-Abfrage entscheidsuche-ES
 src/server.py         FastMCP-Server mit allen 7 Tools (stdio + HTTP)
 src/http_app.py       schlanker WSGI-Adapter: GET / = Landing-Page, POST /mcp = MCP
 passenger_wsgi.py     Einstieg für gehosteten Betrieb (LiteSpeed/Passenger)
-static/               Landing-Page + Assets
+static/               Landing-Page, Assets, robots.txt
 ```
+
+## Grenzen am öffentlichen Endpunkt
+
+Der Endpunkt ist offen, also bremsen ein Minutenfenster und zwei
+Tageskontingente. Gezählt wird nach `REMOTE_ADDR`, nicht nach
+`X-Forwarded-For`: den Header kann jeder setzen. Die Tageskontingente hängen
+bei IPv6 am **/64**, nicht an der Einzeladresse, weil ein IPv6-Client darin
+beliebig wechseln kann und der gemessene Crawler genau das tat.
+
+| Fenster | Grenze | Gilt für |
+|---------|--------|----------|
+| Minutenfenster | 30 Anfragen pro 60 Sekunden | jede Anfrage, auch GET |
+| Tageskontingent «teuer» | 25 Aufrufe pro Tag | `vg_search`, `vg_get_by_nummer`, `vg_index_info` |
+| Tageskontingent «billig» | 300 Aufrufe pro Tag | die vier `belex_*`-Tools |
+
+Die Trennung folgt den Kosten: die `vg_*`-Tools fragen live die Elasticsearch von
+entscheidsuche.ch ab, also fremde Infrastruktur eines gemeinnützigen Vereins
+(`vg_index_info` kostet dort zwei Abfragen pro Aufruf). Die `belex_*`-Tools lesen
+nur die lokale SQLite.
+
+Dimensioniert ist das an gemessener Nutzung (Zugriffslog 31.10. bis 20.11.2026),
+nicht an einem Schätzwert: eine echte Client-Adresse kam auf höchstens 4
+Werkzeugaufrufe pro Tag (p95 3, Median 1, über 442 Adresstage), der auffälligste
+der im November aufgetauchten Crawler auf 32 aus einem einzigen /64. Ein
+naheliegendes Tageslimit von 200 hätte ihn nicht erwischt.
+
+`initialize`, `tools/list`, `ping` und Notifications zählen nicht mit, damit das
+Protokoll-Handshake echter Clients nie am Kontingent scheitert. Ein erschöpftes
+Kontingent antwortet mit **HTTP 200** und einem `tools/call`-Ergebnis mit
+`isError` plus Klartextbegründung, nicht mit 429: ein unerwarteter Statuscode hat
+im August 2026 bei `mcp-remote` einen Reconnect-Sturm ausgelöst.
+
+Die erste Abweisung pro Schlüssel, Tag und Gruppe schreibt eine Zeile ins
+`stderr.log`. So bleibt nachprüfbar, ob je echte Nutzung getroffen wurde.
+
+Die Zähler liegen in `data/rate.sqlite` (Tabellen `hits` für das Minutenfenster,
+`quota` für die Tage), weil LiteSpeed mehrere `lswsgi`-Prozesse fährt und ein
+Zähler im Prozessspeicher darum nicht greift. Beide Tabellen räumen alte Zeilen
+selbst weg.
 
 ## Lokal betreiben (stdio, Claude Desktop)
 

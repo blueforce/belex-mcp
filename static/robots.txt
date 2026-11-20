@@ -1,0 +1,15 @@
+# belex.blueforce.ch — MCP-Server fuer Berner Recht (BSG und VGer-Rechtsprechung)
+#
+# Die Landing-Page darf indexiert werden. Der MCP-Endpunkt nicht: /mcp spricht
+# JSON-RPC ueber POST und laedt die Urteile live aus der Elasticsearch von
+# entscheidsuche.ch, der Infrastruktur eines gemeinnuetzigen Vereins.
+# Automatisches Abgrasen belastet damit fremde Server, nicht nur unsere.
+# Wer den Dienst nutzen will, ist willkommen: https://belex.blueforce.ch/
+#
+# Hygiene, keine Schutzmassnahme. Verbindlich bremst das Tageskontingent pro
+# Absenderadresse in src/http_app.py.
+
+User-agent: *
+Disallow: /mcp
+Disallow: /mcp/
+Allow: /

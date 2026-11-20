@@ -18,6 +18,7 @@ haengt nicht an FastMCP-Interna ausser den stabilen list_tools()/call_tool().
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import mimetypes
 import sqlite3
@@ -54,6 +55,41 @@ _rate_ready = False
 _rate_fallback_lock = threading.Lock()
 _rate_fallback: dict[str, list[float]] = {}
 
+# ---- Tageskontingent pro IP und Kostenklasse ------------------------------ #
+# Das Minutenfenster oben bremst Haemmern, aber nicht den Dauerlaeufer: ein
+# Crawler mit rund 126 Aufrufen pro Tag bleibt muehelos unter 30 pro Minute.
+# Genau das war am 19./20.11.2026 zu sehen, als der Endpunkt von fremden
+# Crawlern entdeckt wurde. Darum ein zweites, langsames Fenster.
+#
+# Getrennt nach Kosten, weil nur ein Teil der Werkzeuge nach aussen geht:
+#   teuer  = vg_*     -> live in die Elasticsearch von entscheidsuche.ch, der
+#                        Infrastruktur eines gemeinnuetzigen Vereins. Diese Last
+#                        traegt nicht unser Server, sondern deren. vg_index_info
+#                        kostet dort sogar zwei Abfragen pro Aufruf.
+#   billig = belex_*  -> lokale SQLite, kostet praktisch nichts.
+#
+# Dimensioniert an der gemessenen echten Nutzung (Zugriffslog 31.10.-20.11.2026),
+# nicht an einem Bauchwert. Werkzeugaufrufe pro IP und Tag:
+#   Claude-User (echte Nutzung, verteilt auf rund 70 Anthropic-IPs):
+#       Maximum 4, p95 3, Median 1 ueber 442 IP-Tage
+#   codex-mcp-client (echte Nutzung von Schweizer Anschluessen):  Maximum 10
+#   Python-urllib/3.12 (neuer Crawler):                           32
+#   undici, agent-index, ResearchClient (neue Crawler):           2 bis 2
+# Ein Tageslimit von 200, wie es naheliegt, haette keinen davon erwischt.
+# Nur Python-urllib lag ueber 25 — und genau dieser Client wechselt die Adresse
+# innerhalb seines Praefixes (::5e0:75 und ::5e1:f am selben Tag), weshalb der
+# Zaehler bei IPv6 am /64 haengt und nicht an der Einzeladresse.
+_TEURE_TOOLS = frozenset({"vg_search", "vg_get_by_nummer", "vg_index_info"})
+_QUOTA = {
+    # 25 ist mehr als das Sechsfache des hoechsten echten Tageswerts einer IP
+    # und laesst Raum fuer weiteres Wachstum (der Verkehr hat sich seit dem
+    # 17.11. bereits auf das 2,6-Fache erhoeht). Die Crawler liegen darueber.
+    "teuer": 25,
+    # Reine Notbremse gegen Dauerhaemmern auf die lokale SQLite. Hier schadet
+    # Menge nur dem eigenen CPU-Kontingent, darum weit gefasst.
+    "billig": 300,
+}
+
 
 def _client_ip(environ) -> str:
     # REMOTE_ADDR ist auf LiteSpeed/Passenger die echte Client-IP. X-Forwarded-For
@@ -80,6 +116,11 @@ def _rate_ensure():
         conn = _rate_conn()
         conn.execute("CREATE TABLE IF NOT EXISTS hits(ip TEXT, ts REAL)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_hits ON hits(ip, ts)")
+        # Eigene Tabelle fuer das Tagesfenster. Bewusst NICHT in 'hits': dort
+        # raeumt jeder Aufruf alles weg, was aelter als 60 Sekunden ist.
+        conn.execute("CREATE TABLE IF NOT EXISTS quota("
+                     "ip TEXT, tag TEXT, grp TEXT, n INTEGER, "
+                     "PRIMARY KEY(ip, tag, grp))")
         conn.commit()
         conn.close()
         _rate_ready = True
@@ -122,6 +163,91 @@ def _rate_ok_memory(ip: str) -> bool:
             for k in [k for k, v in _rate_fallback.items() if not v or v[-1] < cutoff]:
                 del _rate_fallback[k]
         return True
+
+
+def _quota_key(ip: str) -> str:
+    """Zaehlschluessel fuer das Tagesfenster.
+
+    Bei IPv4 die Adresse selbst, bei IPv6 das /64. Ein IPv6-Client hat in der
+    Regel ein ganzes /64 zur Verfuegung und kann darin beliebig wechseln: der
+    gemessene Crawler tat das am 20.11.2026 innerhalb eines Tages
+    (2a13:9500:1e4:12e9::5e0:75 und ::5e1:f, dazu ::41f:16 am Vortag). Pro
+    Einzeladresse gezaehlt haette er sein Kontingent gratis vervielfacht.
+
+    Das Minutenfenster bleibt bewusst auf der Einzeladresse: dort geht es um
+    Haemmern aus einer Quelle, nicht um ein Tagesbudget.
+    """
+    try:
+        adresse = ipaddress.ip_address(ip)
+    except ValueError:
+        return ip  # '?' oder etwas Unerwartetes: unveraendert als Schluessel
+    if adresse.version == 6:
+        return str(ipaddress.ip_network(f"{ip}/64", strict=False))
+    return ip
+
+
+def _quota_ok(ip: str, gruppe: str) -> bool:
+    """False, wenn die IP ihr Tageskontingent dieser Kostenklasse erreicht hat.
+
+    Fail-open bei DB-Fehler: eine klemmende SQLite darf echte Nutzung nicht
+    aussperren, das Minutenfenster greift ohnehin weiter.
+    """
+    grenze = _QUOTA.get(gruppe)
+    if not grenze:
+        return True
+    tag = time.strftime("%Y-%m-%d", time.gmtime())  # UTC, damit der Tag eindeutig ist
+    ip = _quota_key(ip)
+    try:
+        _rate_ensure()
+        conn = _rate_conn()
+        try:
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO quota(ip, tag, grp, n) VALUES(?,?,?,0)",
+                (ip, tag, gruppe))
+            if cur.rowcount:
+                # Erster Aufruf dieser IP heute: guter Moment zum Aufraeumen.
+                # Dadurch bleibt die Tabelle bei wenigen Zeilen, ohne dass
+                # jeder einzelne Aufruf eine Loeschoperation kostet.
+                conn.execute("DELETE FROM quota WHERE tag < ?", (tag,))
+            row = conn.execute("SELECT n FROM quota WHERE ip=? AND tag=? AND grp=?",
+                               (ip, tag, gruppe)).fetchone()
+            if row and row[0] >= grenze:
+                if row[0] == grenze:  # genau einmal pro Schluessel/Tag/Gruppe
+                    print(f"[belex] Kontingent '{gruppe}' erschoepft: {ip} ({tag})",
+                          file=sys.stderr)
+                    conn.execute("UPDATE quota SET n = n + 1 "
+                                 "WHERE ip=? AND tag=? AND grp=?", (ip, tag, gruppe))
+                conn.commit()
+                return False
+            conn.execute("UPDATE quota SET n = n + 1 WHERE ip=? AND tag=? AND grp=?",
+                         (ip, tag, gruppe))
+            conn.commit()
+            return True
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        print(f"[belex] Tageskontingent nicht pruefbar: {exc!r}", file=sys.stderr)
+        return True
+
+
+def _quota_antwort(gruppe: str) -> dict:
+    """Kontingent erschoepft: normales tools/call-Ergebnis, kein HTTP-Fehler.
+
+    Absichtlich HTTP 200 mit isError statt 429: ein unerwarteter Statuscode hat
+    im August 2026 bei mcp-remote einen Reconnect-Sturm ausgeloest (1,66 Mio.
+    Requests). Ein Textfehler im Ergebnis reicht die Begruendung sauber an die
+    Nutzerin durch, statt den Client in eine Schleife zu schicken.
+    """
+    if gruppe == "teuer":
+        text = (f"Tageskontingent fuer die Urteilssuche erreicht ({_QUOTA['teuer']} "
+                "Aufrufe pro Tag und Absenderadresse). Die Urteile kommen live von "
+                "entscheidsuche.ch, der Infrastruktur eines gemeinnuetzigen Vereins; "
+                "das Kontingent haelt die Last dort fair. Die Gesetze (BSG) bleiben "
+                "uneingeschraenkt nutzbar. Ab morgen ist das Kontingent wieder frei.")
+    else:
+        text = (f"Tageskontingent erreicht ({_QUOTA['billig']} Werkzeugaufrufe pro Tag "
+                "und Absenderadresse). Ab morgen ist es wieder frei.")
+    return {"content": [{"type": "text", "text": text}], "isError": True}
 
 
 def _run(coro):
@@ -301,6 +427,17 @@ def application(environ, start_response):
     if req_id is None and isinstance(rpc_method, str) and rpc_method.startswith("notifications/"):
         start_response("202 Accepted", [("Content-Type", "application/json")])
         return [b""]
+
+    # Tageskontingent: greift nur bei tools/call, getrennt nach Kostenklasse.
+    # initialize, tools/list und ping bleiben frei, damit das Protokoll-Handshake
+    # echter Clients nie am Kontingent scheitert.
+    if rpc_method == "tools/call":
+        p = payload.get("params")
+        tool = p.get("name") if isinstance(p, dict) else None
+        gruppe = "teuer" if tool in _TEURE_TOOLS else "billig"
+        if not _quota_ok(_client_ip(environ), gruppe):
+            return _json(start_response, {"jsonrpc": "2.0", "id": req_id,
+                         "result": _quota_antwort(gruppe)})
 
     try:
         result = _dispatch(rpc_method, payload.get("params"), req_id)
