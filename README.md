@@ -101,13 +101,11 @@ Kontingent antwortet mit **HTTP 200** und einem `tools/call`-Ergebnis mit
 `isError` plus Klartextbegründung, nicht mit 429: ein unerwarteter Statuscode hat
 im August 2026 bei `mcp-remote` einen Reconnect-Sturm ausgelöst.
 
-Das billige Kontingent ist eine Notbremse, keine Crawler-Abwehr: den Crawler
-vom 20.11.2026 hätte es mit seinen 36 billigen Aufrufen **nicht** gestoppt.
-Tiefer geht aber nicht sinnvoll, denn die Landing-Page bucht selbst darauf, ein
-Aufruf pro Seitenansicht (`belex_index_info`) und ein weiterer pro Demo-Suche
-(`belex_search`). Zwischen echter Nutzung und diesem Crawler liegt auf der
-billigen Seite keine saubere Grenze, und 36 Abfragen gegen eine lokale SQLite
-tun nicht weh. Die scharfe Bremse sitzt deshalb dort, wo fremde Last entsteht.
+Beide Tageskontingente sind gleich scharf: auf Weisung vom 20.11.2026 wird
+jede Adresse gebremst, ausgenommen die in der Ausnahmeliste. 25 greift beim
+gemessenen Crawler ab dem 26. Aufruf; die höchsten echten Tageswerte lagen bei
+4 und 10. Auf der Landing-Page kostet jeder Seitenaufruf einen Aufruf und jede
+Demo-Suche einen weiteren, das sind rund 12 Demo-Suchen pro Tag und Adresse.
 
 ### Ausnahmen
 
@@ -130,10 +128,7 @@ Die Adressen gehören bewusst **nicht** in den Quelltext: dieses Repository ist
 öffentlich, und im gehosteten Betrieb liefert der Webserver `GET /src/*.py` mit
 HTTP 200 aus. Eine private Anschlussadresse gehört in keines von beiden.
 
-Die Ausnahme ist dabei der Gürtel zu den Hosenträgern, nicht die tragende
-Massnahme: der stärkste gemessene eigene Nutzungstag lag bei 16 Werkzeugaufrufen,
-davon genau einem teuren. Das sind 4 Prozent des teuren und 6 Prozent des
-billigen Kontingents, die Bremse hätte also auch ohne Ausnahme nie gegriffen.
+Eine Ausnahme gilt für **beide** Fenster, auch für das Minutenfenster.
 
 Die erste Abweisung pro Schlüssel, Tag und Gruppe schreibt eine Zeile ins
 `stderr.log`, bewusst **ohne** Adresse, nur mit der groben Herkunft

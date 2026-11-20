@@ -75,9 +75,8 @@ _rate_fallback: dict[str, list[float]] = {}
 #       Maximum 4, p95 3, Median 1 ueber 442 IP-Tage
 #   codex-mcp-client (echte Nutzung von Schweizer Anschluessen):  Maximum 10
 #   eigener Anschluss (curl, Live-Checks am 19.11.):              16
-#       davon genau 1 teurer Aufruf (vg_index_info). Die Bremse haette ihn
-#       also auch ohne Ausnahme nie erreicht: 4 % des teuren, 6 % des
-#       billigen Kontingents.
+#       davon genau 1 teurer Aufruf (vg_index_info). Dieser Anschluss steht
+#       in der Ausnahmeliste und wird in keinem der beiden Fenster gezaehlt.
 #   Python-urllib/3.12 (neuer Crawler):                           32
 #   undici, agent-index, ResearchClient (neue Crawler):           2 bis 2
 # Ein Tageslimit von 200, wie es naheliegt, haette keinen davon erwischt.
@@ -90,19 +89,19 @@ _QUOTA = {
     # und laesst Raum fuer weiteres Wachstum (der Verkehr hat sich seit dem
     # 17.11. bereits auf das 2,6-Fache erhoeht). Die Crawler liegen darueber.
     "teuer": 25,
-    # Reine Notbremse gegen Dauerhaemmern auf die lokale SQLite. Hier schadet
-    # Menge nur dem eigenen CPU-Kontingent, darum weit gefasst.
+    # Auf Rogers ausdrueckliche Weisung vom 20.11.2026 («alle und jeden bremsen
+    # ausser meine IP») gleich scharf wie die teure Gruppe, statt der frueheren
+    # 300. 300 war eine reine Notbremse und haette den Crawler vom 20.11. nicht
+    # gestoppt (36 billige Aufrufe aus seinem /64); 25 greift bei ihm ab dem
+    # 26. Aufruf.
     #
-    # Offen gesagt: dieser Wert haette den Crawler vom 20.11.2026 NICHT gestoppt
-    # (36 billige Aufrufe aus seinem /64). Tiefer geht aber nicht sinnvoll, denn
-    # die Landing-Page bucht selbst auf dieses Kontingent: jeder Seitenaufruf
-    # kostet einen Aufruf (belex_index_info) und jede Demo-Suche einen weiteren
-    # (belex_search). Eine Besucherin mit 15 Suchen liegt damit schon bei rund
-    # 30, die hoechste beobachtete Einzelzahl echter Nutzung war 16. Zwischen
-    # echter Nutzung und diesem Crawler liegt auf der billigen Seite also keine
-    # saubere Grenze — und 36 Abfragen gegen eine lokale SQLite tun auch nicht
-    # weh. Die scharfe Bremse gehoert dorthin, wo es fremde Last erzeugt: oben.
-    "billig": 300,
+    # Was 25 fuer echte Nutzung bedeutet, in Zahlen statt Vermutung: die
+    # hoechsten gemessenen Tageswerte sind 4 (Claude-User) und 10
+    # (codex-mcp-client). Auf der Landing-Page kostet jeder Seitenaufruf einen
+    # Aufruf (belex_index_info) und jede Demo-Suche einen weiteren
+    # (belex_search), eine Besucherin hat also rund 12 Demo-Suchen pro Tag.
+    # Rogers eigener Anschluss ist ohnehin ausgenommen.
+    "billig": 25,
 }
 
 # ---- Ausnahmen vom Tageskontingent --------------------------------------- #
@@ -171,6 +170,11 @@ def _rate_ensure():
 
 def _rate_ok(ip: str) -> bool:
     """False, wenn die IP im Fenster ihr Limit erreicht hat. Fail-open bei DB-Fehler."""
+    # Die Ausnahmeliste gilt fuer BEIDE Fenster. Roger, 20.11.2026: «alle und
+    # jeden bremsen ausser meine IP» — eine Ausnahme, die nur das Tagesfenster
+    # umgeht, waere keine.
+    if _ausgenommen(ip):
+        return True
     try:
         _rate_ensure()
         now = time.time()
