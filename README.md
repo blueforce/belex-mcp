@@ -109,6 +109,32 @@ Aufruf pro Seitenansicht (`belex_index_info`) und ein weiterer pro Demo-Suche
 billigen Seite keine saubere Grenze, und 36 Abfragen gegen eine lokale SQLite
 tun nicht weh. Die scharfe Bremse sitzt deshalb dort, wo fremde Last entsteht.
 
+### Ausnahmen
+
+Adressen, die nie gebremst werden, stehen zeilenweise in
+`~/belex-ausnahmen.txt`, **ausserhalb** des Webverzeichnisses:
+
+```
+# eigener Anschluss
+198.51.100.7
+```
+
+Einzelne IPv4- oder IPv6-Adressen oder Netze in CIDR-Form, `#` beginnt einen
+Kommentar. Netze gröber als `/24` (IPv4) bzw. `/48` (IPv6) werden abgewiesen und
+geloggt: ein versehentliches `/16` wäre ein ganzer Providerblock und damit ein
+Loch in der Bremse. Die Datei wird höchstens alle 60 Sekunden neu gelesen, eine
+Änderung wirkt also ohne Deploy und ohne Neustart. Fehlt sie, gibt es keine
+Ausnahmen.
+
+Die Adressen gehören bewusst **nicht** in den Quelltext: dieses Repository ist
+öffentlich, und im gehosteten Betrieb liefert der Webserver `GET /src/*.py` mit
+HTTP 200 aus. Eine private Anschlussadresse gehört in keines von beiden.
+
+Die Ausnahme ist dabei der Gürtel zu den Hosenträgern, nicht die tragende
+Massnahme: der stärkste gemessene eigene Nutzungstag lag bei 16 Werkzeugaufrufen,
+davon genau einem teuren. Das sind 4 Prozent des teuren und 6 Prozent des
+billigen Kontingents, die Bremse hätte also auch ohne Ausnahme nie gegriffen.
+
 Die erste Abweisung pro Schlüssel, Tag und Gruppe schreibt eine Zeile ins
 `stderr.log`, bewusst **ohne** Adresse, nur mit der groben Herkunft
 (`Anthropic` oder `fremd`): im gehosteten Betrieb ist `GET /stderr.log`

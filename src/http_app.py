@@ -21,6 +21,7 @@ import asyncio
 import ipaddress
 import json
 import mimetypes
+import os
 import sqlite3
 import sys
 import threading
@@ -73,6 +74,10 @@ _rate_fallback: dict[str, list[float]] = {}
 #   Claude-User (echte Nutzung, verteilt auf rund 70 Anthropic-IPs):
 #       Maximum 4, p95 3, Median 1 ueber 442 IP-Tage
 #   codex-mcp-client (echte Nutzung von Schweizer Anschluessen):  Maximum 10
+#   eigener Anschluss (curl, Live-Checks am 19.11.):              16
+#       davon genau 1 teurer Aufruf (vg_index_info). Die Bremse haette ihn
+#       also auch ohne Ausnahme nie erreicht: 4 % des teuren, 6 % des
+#       billigen Kontingents.
 #   Python-urllib/3.12 (neuer Crawler):                           32
 #   undici, agent-index, ResearchClient (neue Crawler):           2 bis 2
 # Ein Tageslimit von 200, wie es naheliegt, haette keinen davon erwischt.
@@ -99,6 +104,34 @@ _QUOTA = {
     # weh. Die scharfe Bremse gehoert dorthin, wo es fremde Last erzeugt: oben.
     "billig": 300,
 }
+
+# ---- Ausnahmen vom Tageskontingent --------------------------------------- #
+# Rogers eigener Anschluss soll nie gebremst werden.
+#
+# Die Adresse steht absichtlich NICHT hier. Zwei Gruende, beide gemessen bzw.
+# bekannt: im gehosteten Betrieb liefert der Webserver die Quelldateien aus
+# (GET /src/http_app.py -> HTTP 200, 20.11.2026), und dieses Repository ist
+# oeffentlich. Eine private Anschlussadresse gehoert in keines von beiden.
+#
+# Stattdessen eine Zeile pro Eintrag in einer Datei ausserhalb des
+# Webverzeichnisses:
+#
+#     ~/belex-ausnahmen.txt
+#     198.51.100.7         # eigener Anschluss (Beispieladresse)
+#
+# Erlaubt sind einzelne IPv4- oder IPv6-Adressen und Netze in CIDR-Form,
+# '#' beginnt einen Kommentar. Die Datei wird hoechstens alle 60 Sekunden neu
+# gelesen: eine Aenderung wirkt damit ohne Deploy und ohne Neustart. Fehlt die
+# Datei, gibt es keine Ausnahmen — das ist der Normalfall fuer Selbsthoster.
+#
+# Grosse Netze werden abgewiesen. Ein Tippfehler, der statt einer Adresse ein
+# /16 eintraegt, waere ein ganzer Providerblock mit vielen fremden Anschluessen
+# darin und riss ein Loch in die Bremse.
+_AUSNAHMEN_DATEI = Path(os.path.expanduser("~/belex-ausnahmen.txt"))
+_AUSNAHMEN_TTL = 60                      # Sekunden, bis neu gelesen wird
+_AUSNAHME_MIN_PRAEFIX = {4: 24, 6: 48}   # kleinere Praefixlaenge = zu grosses Netz
+_ausnahmen_lock = threading.Lock()
+_ausnahmen_stand: tuple[float, tuple] = (0.0, ())
 
 
 def _client_ip(environ) -> str:
@@ -175,6 +208,55 @@ def _rate_ok_memory(ip: str) -> bool:
         return True
 
 
+def _ausnahmen() -> tuple:
+    """Netze aus der Ausnahmedatei, gecacht fuer _AUSNAHMEN_TTL Sekunden."""
+    global _ausnahmen_stand
+    jetzt = time.time()
+    geladen, netze = _ausnahmen_stand
+    if jetzt - geladen < _AUSNAHMEN_TTL:
+        return netze
+    with _ausnahmen_lock:
+        geladen, netze = _ausnahmen_stand
+        if jetzt - geladen < _AUSNAHMEN_TTL:
+            return netze
+        gelesen = []
+        try:
+            text = _AUSNAHMEN_DATEI.read_text(encoding="utf-8")
+        except OSError:
+            text = ""  # keine Datei -> keine Ausnahmen
+        for nr, zeile in enumerate(text.splitlines(), 1):
+            zeile = zeile.split("#", 1)[0].strip()
+            if not zeile:
+                continue
+            try:
+                netz = ipaddress.ip_network(zeile, strict=False)
+            except ValueError:
+                # Inhalt NICHT mitloggen: stderr.log ist abrufbar.
+                print(f"[belex] Ausnahmedatei Zeile {nr}: unlesbar, uebersprungen",
+                      file=sys.stderr)
+                continue
+            if netz.prefixlen < _AUSNAHME_MIN_PRAEFIX[netz.version]:
+                print(f"[belex] Ausnahmedatei Zeile {nr}: /{netz.prefixlen} zu gross, "
+                      f"abgewiesen (erlaubt ab /{_AUSNAHME_MIN_PRAEFIX[netz.version]})",
+                      file=sys.stderr)
+                continue
+            gelesen.append(netz)
+        _ausnahmen_stand = (jetzt, tuple(gelesen))
+        return _ausnahmen_stand[1]
+
+
+def _ausgenommen(ip: str) -> bool:
+    """True, wenn diese Adresse in der Ausnahmedatei steht."""
+    netze = _ausnahmen()
+    if not netze:
+        return False
+    try:
+        adresse = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return any(adresse in netz for netz in netze)
+
+
 def _quota_key(ip: str) -> str:
     """Zaehlschluessel fuer das Tagesfenster.
 
@@ -204,6 +286,8 @@ def _quota_ok(ip: str, gruppe: str) -> bool:
     """
     grenze = _QUOTA.get(gruppe)
     if not grenze:
+        return True
+    if _ausgenommen(ip):
         return True
     tag = time.strftime("%Y-%m-%d", time.gmtime())  # UTC, damit der Tag eindeutig ist
     schluessel = _quota_key(ip)
